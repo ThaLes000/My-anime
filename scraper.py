@@ -9,7 +9,8 @@ import urllib.request
 
 TITLE = "MegaSource Anime"
 VERSION = "2.0.0"
-DESCRIPTION = "Anime stream scraper"
+DESCRIPTION = "DooPlayer based anime scraper"
+
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -17,8 +18,10 @@ USER_AGENT = (
     "Chrome/148.0.0.0 Safari/537.36"
 )
 
+
 BASE_URL = "https://nxxhentai.net/"
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
+
 
 _cookiejar = http.cookiejar.CookieJar()
 
@@ -27,150 +30,129 @@ _opener = urllib.request.build_opener(
 )
 
 
-# ---------------------------------------------------------
-# HTTP
-# ---------------------------------------------------------
-
 def _request(url, referer=None, origin=None):
+
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": (
             "text/html,application/xhtml+xml,"
             "application/xml;q=0.9,*/*;q=0.8"
         ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive",
+        "Accept-Language": (
+            "en-US,en;q=0.9"
+        ),
     }
+
 
     if referer:
         headers["Referer"] = referer
 
+
     if origin:
         headers["Origin"] = origin
 
-    request = urllib.request.Request(
+
+    req = urllib.request.Request(
         url,
         headers=headers,
-        method="GET",
+        method="GET"
     )
 
+
     try:
-        with _opener.open(request, timeout=25) as response:
+        with _opener.open(
+            req,
+            timeout=25
+        ) as response:
+
             return (
                 response.status,
                 response.read().decode(
                     "utf-8",
-                    errors="replace",
-                ),
+                    errors="replace"
+                )
             )
 
-    except urllib.error.HTTPError as exc:
+
+    except urllib.error.HTTPError as e:
+
         try:
-            body = exc.read().decode(
+            body = e.read().decode(
                 "utf-8",
-                errors="replace",
+                errors="replace"
             )
+
         except Exception:
             body = ""
 
-        return exc.code, body
+
+        return (
+            e.code,
+            body
+        )
+
 
     except Exception:
-        return 0, ""
+
+        return (
+            0,
+            ""
+        )
 
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
 
 def _clean(value):
+
     if not value:
         return ""
+
 
     value = html.unescape(value)
 
-    replacements = {
-        "\\/": "/",
-        "\\u0026": "&",
-        "\\x26": "&",
-        "\\u003d": "=",
-        "\\u003f": "?",
-    }
+    value = value.replace(
+        "\\/",
+        "/"
+    )
 
-    for old, new in replacements.items():
-        value = value.replace(old, new)
+    value = value.replace(
+        "\\u0026",
+        "&"
+    )
 
-    return re.sub(
+    value = re.sub(
         r"\s+",
         " ",
-        value,
-    ).strip()
-
-
-def _strip_html(value):
-    if not value:
-        return ""
-
-    value = re.sub(
-        r"<script\b[^>]*>[\s\S]*?</script>",
-        " ",
-        value,
-        flags=re.I,
+        value
     )
 
-    value = re.sub(
-        r"<style\b[^>]*>[\s\S]*?</style>",
-        " ",
-        value,
-        flags=re.I,
-    )
 
-    value = re.sub(
-        r"<[^>]+>",
-        " ",
-        value,
-    )
+    return value.strip()
 
-    return _clean(value)
-
-
-def _normalize(value):
-    value = _strip_html(value).lower()
-
-    value = value.replace("-", " ")
-    value = value.replace("_", " ")
-
-    value = re.sub(
-        r"[^\w\s\u0600-\u06ff]",
-        " ",
-        value,
-        flags=re.UNICODE,
-    )
-
-    return re.sub(
-        r"\s+",
-        " ",
-        value,
-    ).strip()
 
 
 def _absolute(url, base):
+
     url = _clean(url)
 
     if not url:
         return ""
 
+
     return urllib.parse.urljoin(
         base,
-        url,
+        url
     )
 
 
+
 def _origin(url):
+
     parsed = urllib.parse.urlparse(url)
+
 
     if not parsed.scheme or not parsed.netloc:
         return ""
+
 
     return (
         parsed.scheme
@@ -179,262 +161,172 @@ def _origin(url):
     )
 
 
-# ---------------------------------------------------------
-# MegaSource media_id
-# ---------------------------------------------------------
+
+def _normalize(value):
+
+    value = _clean(value).lower()
+
+
+    value = value.replace(
+        "-",
+        " "
+    )
+
+    value = value.replace(
+        "_",
+        " "
+    )
+
+
+    value = re.sub(
+        r"[^\w\s\u0600-\u06ff]",
+        " ",
+        value,
+        flags=re.UNICODE
+    )
+
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+
+    return value.strip()
+
+
 
 def _parse_media_id(media_id):
-    if not media_id:
-        return None, None, None
 
-    media_id = _clean(media_id)
-
-    match = re.match(
-        r"^(tt\d+):(\d+):(\d+)$",
-        media_id,
-        re.I,
+    media_id = _clean(
+        media_id
     )
 
-    if match:
+
+    parts = media_id.split(":")
+
+
+    if len(parts) >= 3:
+
         return (
-            match.group(1),
-            match.group(2),
-            match.group(3),
+            parts[0],
+            parts[1],
+            parts[2]
         )
+
 
     match = re.search(
-        r"(tt\d+).*?(\d+).*?(\d+)",
+        r"(tt\d+).*?[:/_-]+(\d+).*?[:/_-]+(\d+)",
         media_id,
-        re.I,
+        re.I
     )
 
+
     if match:
+
         return (
             match.group(1),
             match.group(2),
-            match.group(3),
+            match.group(3)
         )
 
-    return None, None, None
+
+    return (
+        None,
+        None,
+        None
+    )
 
 
-# ---------------------------------------------------------
-# Cinemeta
-# ---------------------------------------------------------
 
-def get_anime_metadata(imdb_id):
+def get_anime_name(imdb_id):
+
     if not imdb_id:
         return None
+
 
     url = (
         CINEMETA_URL
         + "/meta/series/"
         + urllib.parse.quote(
             imdb_id,
-            safe="",
+            safe=""
         )
         + ".json"
     )
 
+
     status, body = _request(url)
+
 
     if status != 200:
         return None
 
+
     try:
         data = json.loads(body)
+
     except Exception:
         return None
 
-    meta = data.get("meta") or {}
-
-    names = [
-        meta.get("name"),
-        meta.get("originalName"),
-        meta.get("original_title"),
-        meta.get("title"),
-    ]
-
-    for name in names:
-        name = _clean(name)
-
-        if name:
-            return {
-                "name": name,
-                "meta": meta,
-            }
-
-    return None
 
 
-# ---------------------------------------------------------
-# Site search
-# ---------------------------------------------------------
+    meta = data.get(
+        "meta",
+        {}
+    )
 
+
+    name = (
+        meta.get("name")
+        or meta.get("originalName")
+        or meta.get("title")
+    )
+
+
+    return _clean(name)
 def search_anime(name):
+
     if not name:
         return None
 
-    search_url = (
+
+    query = urllib.parse.urlencode({
+        "s": name
+    })
+
+
+    url = (
         BASE_URL.rstrip("/")
-        + "/?s="
-        + urllib.parse.quote(
-            name,
-            safe="",
-        )
+        + "/?"
+        + query
     )
+
 
     status, body = _request(
-        search_url,
-        referer=BASE_URL.rstrip("/") + "/",
+        url,
+        referer=BASE_URL + "/"
     )
 
-    if status != 200 or not body:
+
+    if status != 200:
         return None
 
-    candidates = []
 
-    # Primary WordPress-style result
+
+    results = []
+
+
     pattern = re.compile(
-        r'<a\b[^>]*href=["\']'
-        r'([^"\']+)'
-        r'["\'][^>]*>'
+        r'<a\b[^>]*href=["\']([^"\']*?/anime/[^"\']*)["\'][^>]*>'
         r'([\s\S]*?)'
         r'</a>',
-        re.I,
+        re.I
     )
+
 
     for match in pattern.finditer(body):
-
-        href = _clean(match.group(1))
-
-        if "/anime/" not in href.lower():
-            continue
-
-        content = match.group(2)
-
-        title = _strip_html(content)
-
-        if not title:
-            continue
-
-        url = _absolute(
-            href,
-            search_url,
-        )
-
-        if not url:
-            continue
-
-        candidates.append(
-            {
-                "title": title,
-                "url": url,
-            }
-        )
-
-    if not candidates:
-        return None
-
-    wanted = _normalize(name)
-
-    # Exact match
-    for candidate in candidates:
-
-        current = _normalize(
-            candidate["title"]
-        )
-
-        if current == wanted:
-            return candidate["url"]
-
-    # Contains match
-    for candidate in candidates:
-
-        current = _normalize(
-            candidate["title"]
-        )
-
-        if (
-            wanted in current
-            or current in wanted
-        ):
-            return candidate["url"]
-
-    # Token similarity
-    wanted_words = set(
-        wanted.split()
-    )
-
-    best_url = None
-    best_score = 0
-
-    for candidate in candidates:
-
-        current = _normalize(
-            candidate["title"]
-        )
-
-        current_words = set(
-            current.split()
-        )
-
-        if not current_words:
-            continue
-
-        score = len(
-            wanted_words & current_words
-        )
-
-        if score > best_score:
-            best_score = score
-            best_url = candidate["url"]
-
-    if best_url:
-        return best_url
-
-    return candidates[0]["url"]
-
-
-# ---------------------------------------------------------
-# Episode extraction
-# ---------------------------------------------------------
-
-def get_episode_url(
-    anime_url,
-    episode_number,
-):
-    if not anime_url:
-        return None
-
-    try:
-        target = int(
-            episode_number
-        )
-    except Exception:
-        return None
-
-    status, body = _request(
-        anime_url,
-        referer=BASE_URL.rstrip("/") + "/",
-    )
-
-    if status != 200 or not body:
-        return None
-
-    # We specifically target anchors pointing
-    # to /episodes/ pages.
-    anchors = re.finditer(
-        r'<a\b[^>]*href=["\']'
-        r'([^"\']*/episodes/[^"\']*)'
-        r'["\'][^>]*>'
-        r'([\s\S]*?)'
-        r'</a>',
-        body,
-        re.I,
-    )
-
-    for match in anchors:
 
         href = _clean(
             match.group(1)
@@ -442,335 +334,509 @@ def get_episode_url(
 
         content = match.group(2)
 
-        visible_text = _strip_html(
+
+        title = re.sub(
+            r"<[^>]+>",
+            " ",
             content
         )
 
-        episode_match = re.search(
-            r"(?:الحلقة|episode|ep\.?)"
-            r"\s*0*(\d+)",
-            visible_text,
-            re.I,
-        )
 
-        if not episode_match:
+        title = _clean(title)
+
+
+        if not title:
             continue
 
+
+        results.append(
+            {
+                "title": title,
+                "url": _absolute(
+                    href,
+                    url
+                )
+            }
+        )
+
+
+
+    if not results:
+        return None
+
+
+
+    wanted = _normalize(name)
+
+
+    for item in results:
+
+        if _normalize(item["title"]) == wanted:
+            return item["url"]
+
+
+
+    for item in results:
+
+        current = _normalize(
+            item["title"]
+        )
+
+        if (
+            wanted in current
+            or current in wanted
+        ):
+            return item["url"]
+
+
+
+    return results[0]["url"]
+
+
+
+def get_episode_url(anime_url, episode_number):
+
+    status, body = _request(
+        anime_url,
+        referer=BASE_URL + "/"
+    )
+
+
+    if status != 200:
+        return None
+
+
+
+    try:
+        target = int(
+            episode_number
+        )
+
+    except Exception:
+        return None
+
+
+
+    blocks = re.findall(
+        r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>'
+        r'([\s\S]*?)'
+        r'</a>',
+        body,
+        re.I
+    )
+
+
+
+    for href, content in blocks:
+
+
+        if "/episodes/" not in href.lower():
+            continue
+
+
+
+        text = re.sub(
+            r"<[^>]+>",
+            " ",
+            content
+        )
+
+
+        text = _clean(text)
+
+
+
+        match = re.search(
+            r"(?:الحلقة|episode|ep\.?)\s*0*(\d+)",
+            text,
+            re.I
+        )
+
+
+        if not match:
+            continue
+
+
+
         try:
-            number = int(
-                episode_match.group(1)
+            current = int(
+                match.group(1)
             )
+
         except Exception:
             continue
 
-        if number == target:
+
+
+        if current == target:
+
             return _absolute(
                 href,
-                anime_url,
+                anime_url
             )
 
-    # Secondary fallback:
-    # inspect every /episodes/ href and its nearby
-    # HTML for the requested number.
-    episode_slug = str(target).zfill(2)
 
-    fallback = re.search(
-        r'href=["\']'
-        r'([^"\']*/episodes/[^"\']*'
-        + re.escape(episode_slug)
-        + r'[^"\']*)'
-        r'["\']',
-        body,
-        re.I,
-    )
-
-    if fallback:
-        return _absolute(
-            fallback.group(1),
-            anime_url,
-        )
 
     return None
 
 
-# ---------------------------------------------------------
-# UPNS iframe
-# ---------------------------------------------------------
 
-def get_iframe_url(
-    episode_url,
-):
-    if not episode_url:
-        return None
+
+def get_player_post(episode_url):
 
     status, body = _request(
         episode_url,
-        referer=BASE_URL.rstrip("/") + "/",
+        referer=BASE_URL + "/"
     )
 
-    if status != 200 or not body:
+
+    if status != 200:
         return None
 
-    iframe_matches = re.finditer(
-        r"<iframe\b"
-        r"[^>]*\bsrc\s*=\s*"
-        r"""["']([^"']+)["']""",
+
+
+    match = re.search(
+        r'data-post=["\'](\d+)["\']',
         body,
-        re.I,
+        re.I
     )
 
-    generic = []
 
-    for match in iframe_matches:
-
-        src = _absolute(
-            match.group(1),
-            episode_url,
-        )
-
-        if not src:
-            continue
-
-        generic.append(src)
-
-        # Prefer the UPNS player we have already
-        # confirmed contains the HLS source.
-        if "upns.online" in src.lower():
-            return src
-
-    if generic:
-        return generic[0]
-
-    return None
-
-
-# ---------------------------------------------------------
-# M3U8 extraction
-# ---------------------------------------------------------
-
-def get_m3u8(
-    iframe_url,
-    episode_url,
-):
-    if not iframe_url:
+    if not match:
         return None
+
+
+
+    return match.group(1)
+def get_player_embed(post_id, nume):
+
+    url = (
+        BASE_URL.rstrip("/")
+        + f"/wp-json/dooplayer/v2/{post_id}/tv/{nume}"
+    )
+
 
     status, body = _request(
-        iframe_url,
-        referer=episode_url,
-        origin=_origin(iframe_url),
+        url,
+        referer=BASE_URL + "/"
     )
 
-    if status != 200 or not body:
+
+    if status != 200:
         return None
 
-    # Decode HTML / escaped JavaScript.
-    body = html.unescape(body)
 
-    for old, new in (
-        ("\\/", "/"),
-        ("\\u0026", "&"),
-        ("\\x26", "&"),
-        ("\\u003d", "="),
-        ("\\u003f", "?"),
-    ):
-        body = body.replace(
-            old,
-            new,
-        )
+
+    try:
+        data = json.loads(body)
+
+    except Exception:
+        return None
+
+
+
+    embed = data.get(
+        "embed_url"
+    )
+
+
+    if not embed:
+        return None
+
+
+
+    return _clean(embed)
+
+
+
+
+def extract_media_url(player_url, referer):
+
+    if not player_url:
+        return None
+
+
+
+    origin = _origin(
+        player_url
+    )
+
+
+
+    status, body = _request(
+        player_url,
+        referer=referer,
+        origin=origin
+    )
+
+
+    if status != 200:
+        return None
+
+
+
+    body = html.unescape(
+        body
+    )
+
+
+    body = body.replace(
+        "\\/",
+        "/"
+    )
+
 
     patterns = [
 
-        # <source src="...m3u8">
-        r'<source\b[^>]*\bsrc\s*=\s*'
-        r"""["']([^"']+\.m3u8(?:\?[^"']*)?)["']""",
+        # HLS مباشر
+        r'https?://[^"\'>\s]+\.m3u8(?:\?[^"\'>\s]*)?',
 
-        # src="...m3u8"
-        r'\bsrc\s*=\s*'
-        r"""["']([^"']+\.m3u8(?:\?[^"']*)?)["']""",
 
-        # quoted absolute URL
-        r"""["'](https?://[^"'<>]+\.m3u8(?:\?[^"'<>]*)?)["']""",
+        # MP4 مباشر
+        r'https?://[^"\'>\s]+\.mp4(?:\?[^"\'>\s]*)?',
 
-        # unquoted absolute URL
-        r"""(https?://[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?)""",
 
-        # protocol-relative
-        r"""(//[^\s"'<>]+\.m3u8(?:\?[^\s"'<>]*)?)""",
+        # روابط بدون امتداد واضحة
+        r'https?://[^"\'>\s]+(?:token|expiry)[^"\'>\s]*'
 
-        # relative URL
-        r"""["']([^"']*\.m3u8(?:\?[^"']*)?)["']""",
     ]
+
+
 
     for pattern in patterns:
 
         match = re.search(
             pattern,
             body,
-            re.I,
+            re.I
         )
 
-        if not match:
-            continue
 
-        stream_url = _clean(
-            match.group(1)
-        )
+        if match:
 
-        if not stream_url:
-            continue
-
-        if stream_url.startswith("//"):
-            parsed = urllib.parse.urlparse(
-                iframe_url
+            url = _clean(
+                match.group(0)
             )
 
-            stream_url = (
-                parsed.scheme
-                + ":"
-                + stream_url
-            )
 
-        stream_url = _absolute(
-            stream_url,
-            iframe_url,
-        )
+            if url:
+                return url
 
-        if ".m3u8" in stream_url.lower():
-            return stream_url
+
 
     return None
 
 
-# ---------------------------------------------------------
-# Full series resolver
-# ---------------------------------------------------------
 
-def series(
-    imdb_id,
-    season,
-    episode,
-):
-    metadata = get_anime_metadata(
+
+
+def get_stream_from_players(post_id, episode_url):
+
+    # الترتيب:
+    # 4 = HGCloud
+    # 1 = NxxPlayer
+    # 3 = Playmogo
+    # 2 = AbyssPlayer
+
+
+    players = [
+        4,
+        1,
+        3,
+        2
+    ]
+
+
+
+    for nume in players:
+
+
+        iframe = get_player_embed(
+            post_id,
+            nume
+        )
+
+
+        if not iframe:
+            continue
+
+
+
+        stream = extract_media_url(
+            iframe,
+            episode_url
+        )
+
+
+        if not stream:
+            continue
+
+
+
+        return {
+            "url": stream,
+            "referer": iframe,
+            "origin": _origin(iframe)
+        }
+
+
+
+    return None
+def series(imdb_id, season, episode):
+
+    anime_name = get_anime_name(
         imdb_id
     )
 
-    if not metadata:
-        return {}
 
-    anime_name = metadata["name"]
+    if not anime_name:
+        return None
+
+
 
     anime_url = search_anime(
         anime_name
     )
 
+
     if not anime_url:
-        return {}
+        return None
+
+
 
     episode_url = get_episode_url(
         anime_url,
-        episode,
+        episode
     )
 
-    if not episode_url:
-        return {}
 
-    iframe_url = get_iframe_url(
+    if not episode_url:
+        return None
+
+
+
+    post_id = get_player_post(
         episode_url
     )
 
-    if not iframe_url:
-        return {}
 
-    m3u8_url = get_m3u8(
-        iframe_url,
-        episode_url,
+    if not post_id:
+        return None
+
+
+
+    stream = get_stream_from_players(
+        post_id,
+        episode_url
     )
 
-    if not m3u8_url:
-        return {}
 
-    return {
-        "url": m3u8_url,
-        "User-Agent": USER_AGENT,
-        "Referer": iframe_url,
-        "Origin": _origin(
-            iframe_url
-        ),
-    }
+    if not stream:
+        return None
 
 
-# ---------------------------------------------------------
-# MegaSource entry point
-# ---------------------------------------------------------
+
+    return stream
+
+
+
+
 
 def get_streams(
     media_type,
     media_id,
-    config=None,
+    config=None
 ):
+
     if media_type != "series":
         return []
 
-    imdb_id, season, episode = (
-        _parse_media_id(
-            media_id
-        )
+
+
+    imdb_id, season, episode = _parse_media_id(
+        media_id
     )
+
+
 
     if not imdb_id or not episode:
         return []
 
+
+
     try:
+
         episode_number = int(
             episode
         )
+
     except Exception:
+
         return []
 
-    info = series(
+
+
+    result = series(
         imdb_id,
         season or "1",
-        episode_number,
+        episode_number
     )
 
-    if not info:
+
+
+    if not result:
         return []
 
-    stream_url = info.get(
+
+
+    stream_url = result.get(
         "url"
     )
+
 
     if not stream_url:
         return []
 
+
+
     return [
         {
             "name": TITLE,
+
             "title": (
                 "Episode "
                 + str(episode_number)
             ),
+
             "url": stream_url,
+
+
             "behaviorHints": {
+
                 "notMyMetadata": True,
+
                 "notWebReady": True,
+
+
                 "proxyHeaders": {
+
                     "request": {
-                        "User-Agent": info.get(
-                            "User-Agent",
-                            USER_AGENT,
+
+                        "User-Agent": USER_AGENT,
+
+
+                        "Referer": result.get(
+                            "referer",
+                            ""
                         ),
-                        "Referer": info.get(
-                            "Referer",
-                            "",
-                        ),
-                        "Origin": info.get(
-                            "Origin",
-                            "",
-                        ),
+
+
+                        "Origin": result.get(
+                            "origin",
+                            ""
+                        )
                     }
-                },
-            },
+                }
+            }
         }
     ]
