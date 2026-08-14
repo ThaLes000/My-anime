@@ -1,7 +1,7 @@
 import http.cookiejar
+import html
 import json
 import logging
-import html
 import re
 import urllib.error
 import urllib.parse
@@ -17,7 +17,9 @@ DESCRIPTION = "WordPress DooPlayer Anime Provider"
 # CONFIG
 # ============================================================
 
+# ضع دومين موقعك هنا فقط.
 BASE_URL = "https://nxxhentai.net/"
+
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
 
 USER_AGENT = (
@@ -28,7 +30,19 @@ USER_AGENT = (
 
 
 # ============================================================
-# HTTP
+# LOGGING
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[MegaSource] %(message)s"
+)
+
+logger = logging.getLogger("MegaSource")
+
+
+# ============================================================
+# HTTP SESSION
 # ============================================================
 
 _cookiejar = http.cookiejar.CookieJar()
@@ -50,11 +64,17 @@ def _request(
 
     headers = {
         "User-Agent": USER_AGENT,
+
         "Accept": (
             "text/html,application/xhtml+xml,"
             "application/json,text/plain,*/*"
         ),
-        "Accept-Language": "en-US,en;q=0.9",
+
+        "Accept-Language":
+            "en-US,en;q=0.9",
+
+        "Connection":
+            "keep-alive"
     }
 
     if referer:
@@ -77,65 +97,61 @@ def _request(
             ).encode("utf-8")
 
             headers["Content-Type"] = (
-                "application/x-www-form-urlencoded"
+                "application/x-www-form-urlencoded; "
+                "charset=UTF-8"
             )
 
         elif data is not None:
 
             body = data
 
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers=headers,
-        method=method.upper()
-    )
-
     try:
+
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers=headers,
+            method=method.upper()
+        )
 
         with _opener.open(
             request,
             timeout=timeout
         ) as response:
 
-            return (
-                response.status,
-                response.read().decode(
-                    "utf-8",
-                    errors="replace"
-                )
-            )
-
-    except urllib.error.HTTPError as exc:
-
-        try:
-
-            body = exc.read().decode(
+            text = response.read().decode(
                 "utf-8",
                 errors="replace"
             )
 
+            return response.status, text
+
+    except urllib.error.HTTPError as exc:
+
+        try:
+            text = exc.read().decode(
+                "utf-8",
+                errors="replace"
+            )
         except Exception:
+            text = ""
 
-            body = ""
-
-        return (
+        logger.info(
+            "HTTP %s: %s",
             exc.code,
-            body
+            url
         )
+
+        return exc.code, text
 
     except Exception as exc:
 
         logger.info(
-            "Request failed: %s : %s",
-            url,
+            "Request error: %s",
             exc
         )
 
-        return (
-            0,
-            ""
-        )
+        return 0, ""
 
 
 # ============================================================
@@ -162,18 +178,13 @@ def _clean(value):
     )
 
     value = value.replace(
-        "\\u003A",
-        ":"
+        "\\u003d",
+        "="
     )
 
     value = value.replace(
-        "\\u002F",
-        "/"
-    )
-
-    value = value.replace(
-        "&amp;",
-        "&"
+        "\\u003f",
+        "?"
     )
 
     return re.sub(
@@ -183,10 +194,7 @@ def _clean(value):
     ).strip()
 
 
-def _absolute(
-    url,
-    base
-):
+def _absolute(url, base):
 
     url = _clean(url)
 
@@ -251,9 +259,7 @@ def _normalize(value):
     ).strip()
 
 
-def _parse_media_id(
-    media_id
-):
+def _parse_media_id(media_id):
 
     media_id = _clean(
         media_id
@@ -280,9 +286,7 @@ def _parse_media_id(
 # CINEMETA
 # ============================================================
 
-def get_anime_name(
-    imdb_id
-):
+def get_anime_name(imdb_id):
 
     if not imdb_id:
         return None
@@ -308,6 +312,10 @@ def get_anime_name(
     )
 
     if status != 200:
+        logger.info(
+            "Cinemeta failed: %s",
+            status
+        )
         return None
 
     try:
@@ -317,6 +325,10 @@ def get_anime_name(
         )
 
     except Exception:
+
+        logger.info(
+            "Cinemeta returned invalid JSON"
+        )
 
         return None
 
@@ -340,16 +352,14 @@ def get_anime_name(
         title
     )
 
-    return title
+    return title or None
 
 
 # ============================================================
 # SITE SEARCH
 # ============================================================
 
-def search_anime(
-    title
-):
+def search_anime(title):
 
     if not title:
         return None
@@ -371,16 +381,20 @@ def search_anime(
 
     status, body = _request(
         url,
-        referer=BASE_URL + "/"
+        referer=BASE_URL.rstrip("/") + "/"
     )
 
     if status != 200:
+        logger.info(
+            "Search failed: %s",
+            status
+        )
         return None
 
     results = []
 
     links = re.findall(
-        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>'
+        r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>'
         r'([\s\S]*?)'
         r'</a>',
         body,
@@ -402,24 +416,27 @@ def search_anime(
         if not text:
             continue
 
-        full = _absolute(
+        full_url = _absolute(
             href,
             BASE_URL
         )
 
-        low = full.lower()
+        lower_url = full_url.lower()
 
-        if (
-            "/anime/" in low
-            or "/show/" in low
-            or "/tv/" in low
-            or "/series/" in low
+        if any(
+            marker in lower_url
+            for marker in (
+                "/anime/",
+                "/show/",
+                "/tv/",
+                "/series/"
+            )
         ):
 
             results.append(
                 {
                     "title": text,
-                    "url": full
+                    "url": full_url
                 }
             )
 
@@ -435,14 +452,21 @@ def search_anime(
         title
     )
 
+    # Exact
     for item in results:
 
         if _normalize(
             item["title"]
         ) == wanted:
 
+            logger.info(
+                "Exact match: %s",
+                item["url"]
+            )
+
             return item["url"]
 
+    # Partial
     for item in results:
 
         current = _normalize(
@@ -454,7 +478,18 @@ def search_anime(
             or current in wanted
         ):
 
+            logger.info(
+                "Partial match: %s",
+                item["url"]
+            )
+
             return item["url"]
+
+    # Fallback
+    logger.info(
+        "Fallback result: %s",
+        results[0]["url"]
+    )
 
     return results[0]["url"]
 
@@ -468,12 +503,7 @@ def get_episode_url(
     episode_number
 ):
 
-    status, body = _request(
-        anime_url,
-        referer=BASE_URL + "/"
-    )
-
-    if status != 200:
+    if not anime_url:
         return None
 
     try:
@@ -486,8 +516,27 @@ def get_episode_url(
 
         return None
 
+    logger.info(
+        "Anime page: %s",
+        anime_url
+    )
+
+    status, body = _request(
+        anime_url,
+        referer=BASE_URL.rstrip("/") + "/"
+    )
+
+    if status != 200:
+        logger.info(
+            "Anime page failed: %s",
+            status
+        )
+        return None
+
+    candidates = []
+
     links = re.findall(
-        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>'
+        r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>'
         r'([\s\S]*?)'
         r'</a>',
         body,
@@ -506,45 +555,90 @@ def get_episode_url(
             text
         )
 
+        full_url = _absolute(
+            href,
+            anime_url
+        )
+
+        # الحلقة من النص
         match = re.search(
             r"(?:episode|ep|الحلقة)"
-            r"\s*[- ]?0*(\d+)",
+            r"\s*[-_. ]*0*(\d+)",
             text,
             re.I
         )
 
-        if not match:
+        number = None
+
+        if match:
+
+            try:
+                number = int(
+                    match.group(1)
+                )
+            except Exception:
+                number = None
+
+        # الحلقة من الرابط
+        if number is None:
+
+            match = re.search(
+                r"(?:episode|ep|الحلقة)"
+                r"[-_/ ]*0*(\d+)",
+                full_url,
+                re.I
+            )
+
+            if match:
+
+                try:
+                    number = int(
+                        match.group(1)
+                    )
+                except Exception:
+                    number = None
+
+        if number is None:
 
             match = re.search(
                 r"[-_/](\d{1,3})(?:[-_/]|$)",
-                href
+                full_url
             )
 
-        if not match:
-            continue
+            if match:
 
-        try:
-
-            number = int(
-                match.group(1)
-            )
-
-        except Exception:
-
-            continue
+                try:
+                    number = int(
+                        match.group(1)
+                    )
+                except Exception:
+                    number = None
 
         if number == target:
 
-            return _absolute(
-                href,
-                anime_url
+            candidates.append(
+                full_url
             )
+
+    if candidates:
+
+        logger.info(
+            "Episode found: %s",
+            candidates[0]
+        )
+
+        return candidates[0]
+
+    logger.info(
+        "Episode %s not found",
+        target
+    )
 
     return None
 
 
 # ============================================================
-# DOOPLAYER
+# DOOPLAYER EXTRACTION
 # ============================================================
 
 def extract_dooplayer_data(
@@ -553,10 +647,11 @@ def extract_dooplayer_data(
 
     players = []
 
+    # Standard DooPlayer
     pattern = re.compile(
         r'<li\b'
-        r'[^>]*data-post=["\'](\d+)["\']'
-        r'[^>]*data-nume=["\'](\d+)["\']'
+        r'[^>]*data-post=["\']([^"\']+)["\']'
+        r'[^>]*data-nume=["\']([^"\']+)["\']'
         r'[^>]*>'
         r'([\s\S]*?)'
         r'</li>',
@@ -567,23 +662,37 @@ def extract_dooplayer_data(
         episode_html
     ):
 
-        post_id = match.group(1)
-        nume = match.group(2)
+        post_id = _clean(
+            match.group(1)
+        )
+
+        nume = _clean(
+            match.group(2)
+        )
+
         block = match.group(3)
 
         title = ""
 
         title_match = re.search(
-            r'class=["\']title["\']'
-            r'[^>]*>([^<]+)',
+            r'class=["\'][^"\']*\btitle\b[^"\']*["\']'
+            r'[^>]*>'
+            r'([\s\S]*?)'
+            r'</',
             block,
             re.I
         )
 
         if title_match:
 
-            title = _clean(
+            title = re.sub(
+                r"<[^>]+>",
+                " ",
                 title_match.group(1)
+            )
+
+            title = _clean(
+                title
             )
 
         players.append(
@@ -593,6 +702,36 @@ def extract_dooplayer_data(
                 "title": title
             }
         )
+
+    # Some themes use div/button/a instead of li
+    if not players:
+
+        generic_pattern = re.compile(
+            r'(?:data-post=["\']([^"\']+)["\'])'
+            r'[^>]*'
+            r'(?:data-nume=["\']([^"\']+)["\'])'
+            r'[^>]*'
+            r'(?:data-server=["\']([^"\']*)["\'])?',
+            re.I
+        )
+
+        for match in generic_pattern.finditer(
+            episode_html
+        ):
+
+            players.append(
+                {
+                    "post_id": _clean(
+                        match.group(1)
+                    ),
+                    "nume": _clean(
+                        match.group(2)
+                    ),
+                    "title": _clean(
+                        match.group(3)
+                    )
+                }
+            )
 
     logger.info(
         "DooPlayer players: %s",
@@ -608,10 +747,16 @@ def get_episode_players(
 
     status, body = _request(
         episode_url,
-        referer=BASE_URL + "/"
+        referer=BASE_URL.rstrip("/") + "/"
     )
 
     if status != 200:
+
+        logger.info(
+            "Episode request failed: %s",
+            status
+        )
+
         return []
 
     return extract_dooplayer_data(
@@ -623,73 +768,49 @@ def get_episode_players(
 # PLAYER SELECTION
 # ============================================================
 
-TARGET_PLAYERS = [
+PLAYER_PRIORITY = [
     "streamhg",
     "hgcloud",
     "hg cloud",
-    "stream hg",
+    "nxxplayer",
+    "nxxhosting",
+    "fastserver",
+    "doodstream"
 ]
 
 
-def select_players(
-    players
-):
+def select_players(players):
 
-    selected = []
-    others = []
+    def score(player):
 
-    for player in players:
-
-        name = _normalize(
+        title = _normalize(
             player.get(
                 "title",
                 ""
             )
         )
 
-        if any(
-            target in name
-            for target in TARGET_PLAYERS
+        for index, target in enumerate(
+            PLAYER_PRIORITY
         ):
 
-            selected.append(
-                player
-            )
+            if _normalize(target) in title:
 
-        else:
+                return index
 
-            others.append(
-                player
-            )
+        return 999
 
-    # StreamHG first.
-    # Other players remain as fallback.
-    selected.extend(
-        others
+    ordered = sorted(
+        players,
+        key=score
     )
-
-    # If absolutely nothing matched,
-    # try nume=5, which was observed
-    # as a StreamHG option in the previous
-    # version of the scraper.
-    if not selected:
-
-        for player in players:
-
-            if str(
-                player.get("nume")
-            ) == "5":
-
-                selected.append(
-                    player
-                )
 
     logger.info(
         "Player order: %s",
-        selected
+        ordered
     )
 
-    return selected
+    return ordered
 
 
 # ============================================================
@@ -705,9 +826,15 @@ def get_player_embed(
     api_url = (
         BASE_URL.rstrip("/")
         + "/wp-json/dooplayer/v2/"
-        + str(post_id)
+        + urllib.parse.quote(
+            str(post_id),
+            safe=""
+        )
         + "/tv/"
-        + str(nume)
+        + urllib.parse.quote(
+            str(nume),
+            safe=""
+        )
     )
 
     logger.info(
@@ -718,11 +845,17 @@ def get_player_embed(
     status, body = _request(
         api_url,
         referer=referer,
-        origin=BASE_URL,
+        origin=BASE_URL.rstrip("/"),
         ajax=True
     )
 
     if status != 200:
+
+        logger.info(
+            "DooPlayer API failed: %s",
+            status
+        )
+
         return None
 
     try:
@@ -733,54 +866,44 @@ def get_player_embed(
 
     except Exception:
 
+        logger.info(
+            "DooPlayer returned invalid JSON"
+        )
+
         return None
 
-    embed = (
-        data.get("embed_url")
-        or data.get("embed")
-        or data.get("url")
-    )
+    if isinstance(data, dict):
 
-    if not embed:
-        return None
+        embed = (
+            data.get("embed_url")
+            or data.get("embed")
+            or data.get("url")
+        )
 
-    embed = _clean(
-        embed
-    )
+        if embed:
 
-    logger.info(
-        "Embed: %s",
-        embed
-    )
+            embed = _clean(
+                embed
+            )
 
-    return embed
+            logger.info(
+                "Embed: %s",
+                embed
+            )
+
+            return embed
+
+    return None
 
 
 # ============================================================
-# URL EXTRACTION
+# MEDIA EXTRACTION
 # ============================================================
 
-def _looks_like_media_url(
-    url
-):
-
-    low = url.lower()
-
-    return (
-        ".m3u8" in low
-        or ".mp4" in low
-    )
-
-
-def _extract_urls(
+def _extract_urls_from_text(
     text,
-    base
+    base_url
 ):
-
-    found = []
-
-    if not text:
-        return found
 
     text = html.unescape(
         text
@@ -796,19 +919,28 @@ def _extract_urls(
         "&"
     )
 
-    # Direct media URLs.
+    found = []
+
+    # Direct m3u8
     patterns = [
 
         r'https?://[^"\'<>\s]+?\.m3u8(?:\?[^"\'<>\s]*)?',
 
-        r'https?://[^"\'<>\s]+?\.mp4(?:\?[^"\'<>\s]*)?',
+        r'["\'](?:src|file|source|url)["\']'
+        r'\s*:\s*["\']([^"\']+\.m3u8[^"\']*)',
 
-        r'["\'](?:file|source|src|url|hls|hls_direct)["\']'
-        r'\s*:\s*["\']([^"\']+)["\']',
+        r'(?:src|file|source|url)'
+        r'\s*=\s*["\']([^"\']+\.m3u8[^"\']*)',
 
-        r'(?:file|source|src|url|hls|hls_direct)'
-        r'\s*=\s*["\']([^"\']+)["\']',
+        r'<source\b[^>]*src=["\']'
+        r'([^"\']+)["\']'
+        r'[^>]*type=["\']application/vnd\.apple\.mpegurl["\']',
 
+        r'<source\b[^>]*src=["\']'
+        r'([^"\']+\.m3u8[^"\']*)["\']',
+
+        r'https?:\\/\\/[^"\'<>\s]+?'
+        r'\\.m3u8(?:\?[^"\'<>\s]*)?'
     ]
 
     for pattern in patterns:
@@ -819,28 +951,25 @@ def _extract_urls(
             re.I
         ):
 
-            if match.groups():
-
-                value = match.group(1)
-
-            else:
-
-                value = match.group(0)
+            value = (
+                match.group(1)
+                if match.groups()
+                else match.group(0)
+            )
 
             value = _clean(
                 value
             )
 
+            if not value:
+                continue
+
             value = _absolute(
                 value,
-                base
+                base_url
             )
 
-            if (
-                value
-                and _looks_like_media_url(value)
-                and value not in found
-            ):
+            if value and value not in found:
 
                 found.append(
                     value
@@ -849,223 +978,225 @@ def _extract_urls(
     return found
 
 
-def _extract_iframes(
+def _extract_mp4_urls(
     text,
-    base
+    base_url
 ):
 
-    results = []
-
-    if not text:
-        return results
-
-    iframe_pattern = re.compile(
-        r'<iframe\b[^>]*'
-        r'(?:src|data-src|data-url)'
-        r'=["\']([^"\']+)["\']',
-        re.I
-    )
-
-    for match in iframe_pattern.finditer(
+    text = html.unescape(
         text
-    ):
+    )
 
-        url = _absolute(
-            match.group(1),
-            base
+    text = text.replace(
+        "\\/",
+        "/"
+    )
+
+    patterns = [
+
+        r'https?://[^"\'<>\s]+?\.mp4(?:\?[^"\'<>\s]*)?',
+
+        r'["\'](?:src|file|source|url)["\']'
+        r'\s*:\s*["\']([^"\']+\.mp4[^"\']*)',
+
+        r'(?:src|file|source|url)'
+        r'\s*=\s*["\']([^"\']+\.mp4[^"\']*)',
+
+        r'<source\b[^>]*src=["\']'
+        r'([^"\']+\.mp4[^"\']*)'
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            re.I
         )
 
-        if (
-            url
-            and url not in results
-        ):
+        if match:
 
-            results.append(
-                url
+            value = (
+                match.group(1)
+                if match.groups()
+                else match.group(0)
             )
 
-    # Also inspect common JS assignments.
-    js_pattern = re.compile(
-        r'(?:iframe|embed|player|src|url)'
-        r'\s*[:=]\s*["\']([^"\']+)["\']',
-        re.I
-    )
-
-    for match in js_pattern.finditer(
-        text
-    ):
-
-        url = _absolute(
-            match.group(1),
-            base
-        )
-
-        if (
-            url
-            and (
-                "http://" in url
-                or "https://" in url
-            )
-            and url not in results
-        ):
-
-            results.append(
-                url
+            value = _clean(
+                value
             )
 
-    return results
+            if value:
 
-
-# ============================================================
-# PLAYER SCANNER
-# ============================================================
-
-def scan_player(
-    player_url,
-    referer,
-    depth=0,
-    visited=None
-):
-
-    if visited is None:
-        visited = set()
-
-    if not player_url:
-        return None
-
-    if depth > 3:
-        return None
-
-    if player_url in visited:
-        return None
-
-    visited.add(
-        player_url
-    )
-
-    logger.info(
-        "Scanning player depth=%s: %s",
-        depth,
-        player_url
-    )
-
-    status, body = _request(
-        player_url,
-        referer=referer,
-        origin=_origin(player_url),
-        ajax=False,
-        timeout=25
-    )
-
-    if status != 200 or not body:
-        return None
-
-    # --------------------------------------------------------
-    # 1. Direct media URL
-    # --------------------------------------------------------
-
-    media_urls = _extract_urls(
-        body,
-        player_url
-    )
-
-    if media_urls:
-
-        logger.info(
-            "Direct media found: %s",
-            media_urls[0]
-        )
-
-        return {
-            "url": media_urls[0],
-            "referer": player_url,
-            "origin": _origin(player_url)
-        }
-
-    # --------------------------------------------------------
-    # 2. Search explicitly for StreamRuby.
-    # --------------------------------------------------------
-
-    streamruby_candidates = []
-
-    for match in re.finditer(
-        r'https?://[^"\'<>\s]+',
-        body,
-        re.I
-    ):
-
-        candidate = _clean(
-            match.group(0)
-        )
-
-        if (
-            "streamruby" in candidate.lower()
-            or ".m3u8" in candidate.lower()
-        ):
-
-            streamruby_candidates.append(
-                candidate
-            )
-
-    for candidate in streamruby_candidates:
-
-        if _looks_like_media_url(
-            candidate
-        ):
-
-            return {
-                "url": candidate,
-                "referer": player_url,
-                "origin": _origin(player_url)
-            }
-
-    # --------------------------------------------------------
-    # 3. Follow iframe/embed URLs.
-    # --------------------------------------------------------
-
-    children = _extract_iframes(
-        body,
-        player_url
-    )
-
-    for child in children:
-
-        result = scan_player(
-            child,
-            player_url,
-            depth=depth + 1,
-            visited=visited
-        )
-
-        if result:
-
-            return result
+                return _absolute(
+                    value,
+                    base_url
+                )
 
     return None
 
+
+# ============================================================
+# PLAYER HTML
+# ============================================================
 
 def extract_media_url(
     player_url,
     referer
 ):
 
-    result = scan_player(
-        player_url,
-        referer
+    if not player_url:
+        return None
+
+    logger.info(
+        "Opening player: %s",
+        player_url
     )
 
-    if not result:
+    player_origin = _origin(
+        player_url
+    )
+
+    status, body = _request(
+        player_url,
+        referer=referer,
+        origin=player_origin,
+        ajax=False,
+        timeout=25
+    )
+
+    if status != 200:
+
         logger.info(
-            "No media URL found"
+            "Player failed: %s",
+            status
         )
 
         return None
 
-    return result
+    # --------------------------------------------------------
+    # 1. Direct HLS in HTML
+    # --------------------------------------------------------
+
+    m3u8_urls = _extract_urls_from_text(
+        body,
+        player_url
+    )
+
+    if m3u8_urls:
+
+        logger.info(
+            "M3U8 found: %s",
+            m3u8_urls[0]
+        )
+
+        return m3u8_urls[0]
+
+    # --------------------------------------------------------
+    # 2. MP4 fallback
+    # --------------------------------------------------------
+
+    mp4 = _extract_mp4_urls(
+        body,
+        player_url
+    )
+
+    if mp4:
+
+        logger.info(
+            "MP4 found: %s",
+            mp4
+        )
+
+        return mp4
+
+    # --------------------------------------------------------
+    # 3. Search escaped JSON/HTML again
+    # --------------------------------------------------------
+
+    decoded = html.unescape(
+        body
+    )
+
+    decoded = decoded.replace(
+        "\\/",
+        "/"
+    )
+
+    decoded = decoded.replace(
+        "\\u0026",
+        "&"
+    )
+
+    m3u8_urls = _extract_urls_from_text(
+        decoded,
+        player_url
+    )
+
+    if m3u8_urls:
+
+        logger.info(
+            "M3U8 found after decoding: %s",
+            m3u8_urls[0]
+        )
+
+        return m3u8_urls[0]
+
+    # --------------------------------------------------------
+    # 4. Look for player configuration containing source
+    # --------------------------------------------------------
+
+    config_patterns = [
+
+        r'["\']file["\']\s*:\s*["\']([^"\']+)["\']',
+
+        r'["\']source["\']\s*:\s*["\']([^"\']+)["\']',
+
+        r'["\']src["\']\s*:\s*["\']([^"\']+)["\']',
+
+        r'["\']url["\']\s*:\s*["\']([^"\']+)["\']'
+    ]
+
+    for pattern in config_patterns:
+
+        for match in re.finditer(
+            pattern,
+            decoded,
+            re.I
+        ):
+
+            candidate = _clean(
+                match.group(1)
+            )
+
+            if (
+                ".m3u8" in candidate.lower()
+                or ".mp4" in candidate.lower()
+            ):
+
+                candidate = _absolute(
+                    candidate,
+                    player_url
+                )
+
+                if candidate:
+
+                    logger.info(
+                        "Configured media found: %s",
+                        candidate
+                    )
+
+                    return candidate
+
+    logger.info(
+        "No media URL found in player"
+    )
+
+    return None
 
 
 # ============================================================
-# PLAYER LOOP
+# PLAYER CHAIN
 # ============================================================
 
 def get_stream_from_players(
@@ -1073,15 +1204,15 @@ def get_stream_from_players(
     episode_url
 ):
 
-    selected = select_players(
+    ordered = select_players(
         players
     )
 
-    for player in selected:
+    for player in ordered:
 
         logger.info(
             "Trying player: %s",
-            player
+            player.get("title", "")
         )
 
         embed = get_player_embed(
@@ -1093,27 +1224,21 @@ def get_stream_from_players(
         if not embed:
             continue
 
-        result = extract_media_url(
+        media = extract_media_url(
             embed,
             episode_url
         )
 
-        if not result:
+        if not media:
             continue
 
         return {
-            "url": result.get("url"),
-            "referer": result.get(
-                "referer",
-                embed
-            ),
-            "origin": result.get(
-                "origin",
-                _origin(embed)
-            ),
-            "player": player.get(
-                "title",
-                "Stream"
+            "url": media,
+            "referer": embed,
+            "origin": _origin(embed),
+            "player": (
+                player.get("title")
+                or "Anime Stream"
             )
         }
 
@@ -1142,9 +1267,11 @@ def series(
     )
 
     if not title:
+
         logger.info(
-            "No title"
+            "Could not get title from Cinemeta"
         )
+
         return None
 
     anime_url = search_anime(
@@ -1152,9 +1279,11 @@ def series(
     )
 
     if not anime_url:
+
         logger.info(
-            "Anime not found"
+            "Could not find anime page"
         )
+
         return None
 
     episode_url = get_episode_url(
@@ -1163,9 +1292,11 @@ def series(
     )
 
     if not episode_url:
+
         logger.info(
-            "Episode not found"
+            "Could not find episode"
         )
+
         return None
 
     players = get_episode_players(
@@ -1173,9 +1304,11 @@ def series(
     )
 
     if not players:
+
         logger.info(
-            "No players"
+            "No DooPlayer players"
         )
+
         return None
 
     return get_stream_from_players(
@@ -1192,7 +1325,7 @@ def movie(
     imdb_id
 ):
 
-    # Project is currently anime-series only.
+    # Project is intended for series.
     return None
 
 
@@ -1206,6 +1339,12 @@ def get_streams(
     config=None
 ):
 
+    logger.info(
+        "get_streams: type=%s id=%s",
+        media_type,
+        media_id
+    )
+
     if media_type != "series":
         return []
 
@@ -1217,10 +1356,10 @@ def get_streams(
         return []
 
     if not season:
-        season = 1
+        season = "1"
 
     if not episode:
-        episode = 1
+        episode = "1"
 
     try:
 
@@ -1234,6 +1373,10 @@ def get_streams(
 
     except Exception:
 
+        logger.info(
+            "Invalid season/episode"
+        )
+
         return []
 
     result = series(
@@ -1243,9 +1386,11 @@ def get_streams(
     )
 
     if not result:
+
         logger.info(
-            "No stream result"
+            "No result"
         )
+
         return []
 
     stream_url = result.get(
@@ -1253,31 +1398,28 @@ def get_streams(
     )
 
     if not stream_url:
+
         return []
 
     referer = result.get(
-        "referer",
-        BASE_URL + "/"
-    )
+        "referer"
+    ) or BASE_URL.rstrip("/") + "/"
 
     origin = result.get(
-        "origin",
-        BASE_URL
+        "origin"
+    ) or _origin(
+        referer
     )
 
     player_name = result.get(
-        "player",
-        ""
-    )
+        "player"
+    ) or "Anime Stream"
 
     return [
         {
             "name": TITLE,
 
-            "title": (
-                player_name
-                or "Anime Stream"
-            ),
+            "title": player_name,
 
             "url": stream_url,
 
