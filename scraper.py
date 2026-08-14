@@ -13,7 +13,7 @@ VERSION = "3.1.0"
 DESCRIPTION = "WordPress DooPlayer Anime Provider"
 
 
-BASE_URL = "https://nxxhentai.net/"
+BASE_URL = "https://الموقع.net/"
 
 CINEMETA_URL = (
     "https://v3-cinemeta.strem.io"
