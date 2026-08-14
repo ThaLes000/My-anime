@@ -18,7 +18,7 @@ USER_AGENT = (
 )
 
 # Put your website domain here
-BASE_URL = "https://https://nxxhentai.net/"
+BASE_URL = "https://nxxhentai.net/"
 
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
 
