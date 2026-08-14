@@ -1142,4 +1142,12 @@ def extract_media_url(
 
         return m3u8_urls[0]
 
-    # -----------------------------------------
+        return None
+
+
+def get_streams(media_type, media_id, config=None):
+    """
+    MegaSource entry point.
+    This structural implementation intentionally returns no streams.
+    """
+    return []
