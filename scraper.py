@@ -7,9 +7,9 @@ import urllib.parse
 import urllib.request
 
 
-TITLE = "MegaSource Anime"
+TITLE = "MegaSource Anime Scraper"
 VERSION = "1.0.0"
-DESCRIPTION = "Anime scraper"
+DESCRIPTION = "Anime stream scraper"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -17,8 +17,8 @@ USER_AGENT = (
     "Chrome/148.0.0.0 Safari/537.36"
 )
 
-# Put your real website domain here
-BASE_URL = "https://nxxhentai.net"
+# Put your website domain here
+BASE_URL = "https://Nxxhentai.net"
 
 CINEMETA_URL = "https://v3-cinemeta.strem.io"
 
@@ -30,33 +30,35 @@ _opener = urllib.request.build_opener(
 )
 
 
-def _request(url, referer=None, origin=None):
-    headers = {
+def _request(url, method="GET", data=None, headers=None):
+    request_headers = {
         "User-Agent": USER_AGENT,
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;"
-            "q=0.9,*/*;q=0.8"
-        ),
-        "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+        "Accept": "*/*",
     }
 
-    if referer:
-        headers["Referer"] = referer
+    if headers:
+        request_headers.update(headers)
 
-    if origin:
-        headers["Origin"] = origin
+    body = None
 
-    request = urllib.request.Request(
+    if method == "POST":
+        if isinstance(data, dict):
+            body = urllib.parse.urlencode(data).encode("utf-8")
+        elif data is not None:
+            body = data
+
+    req = urllib.request.Request(
         url,
-        headers=headers,
-        method="GET",
+        data=body,
+        headers=request_headers,
+        method=method,
     )
 
     try:
-        with _opener.open(request, timeout=15) as response:
+        with _opener.open(req, timeout=20) as resp:
             return (
-                response.status,
-                response.read().decode("utf-8", errors="replace"),
+                resp.status,
+                resp.read().decode("utf-8", errors="replace"),
             )
 
     except urllib.error.HTTPError as exc:
@@ -71,45 +73,168 @@ def _request(url, referer=None, origin=None):
         return 0, ""
 
 
-def _clean(value):
+def get_anime_name(imdb_id):
+    url = (
+        CINEMETA_URL
+        + "/meta/series/"
+        + urllib.parse.quote(imdb_id)
+        + ".json"
+    )
+
+    status, body = _request(url)
+
+    if status != 200:
+        return None
+
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return None
+
+    meta = data.get("meta") or {}
+
+    return (
+        meta.get("name")
+        or meta.get("originalName")
+    )
+
+
+def _normalize_text(value):
     if not value:
         return ""
 
     value = html.unescape(value)
-    value = value.replace("\\/", "/")
-    value = value.replace("\\u0026", "&")
-    value = value.replace("\\x26", "&")
+    value = value.replace("-", " ")
     value = re.sub(r"\s+", " ", value)
 
-    return value.strip()
+    return value.strip().lower()
 
 
-def _normalize(value):
-    value = _clean(value)
+def search_anime(anime_name):
+    query = urllib.parse.urlencode({
+        "s": anime_name
+    })
 
-    value = value.lower()
-    value = value.replace("-", " ")
-    value = value.replace("_", " ")
-
-    value = re.sub(
-        r"[^\w\s\u0600-\u06ff]",
-        " ",
-        value,
-        flags=re.UNICODE,
+    search_url = (
+        BASE_URL.rstrip("/")
+        + "/?"
+        + query
     )
 
-    value = re.sub(r"\s+", " ", value)
+    status, body = _request(
+        search_url,
+        headers={
+            "Referer": BASE_URL + "/",
+        },
+    )
 
-    return value.strip()
+    if status != 200:
+        return None
+
+    pattern = re.compile(
+        r'<a\b[^>]*href=["\']([^"\']*/anime/[^"\']+)["\'][^>]*>'
+        r'(.*?)'
+        r'</a>',
+        re.I | re.S,
+    )
+
+    results = []
+
+    for match in pattern.finditer(body):
+        href = html.unescape(match.group(1))
+
+        content = re.sub(
+            r"<[^>]+>",
+            " ",
+            match.group(2),
+        )
+
+        title = html.unescape(content)
+        title = re.sub(r"\s+", " ", title).strip()
+
+        if not title:
+            continue
+
+        results.append({
+            "url": urllib.parse.urljoin(
+                search_url,
+                href,
+            ),
+            "title": title,
+        })
+
+    if not results:
+        return None
+
+    wanted = _normalize_text(anime_name)
+
+    for result in results:
+        if _normalize_text(result["title"]) == wanted:
+            return result["url"]
+
+    for result in results:
+        result_title = _normalize_text(result["title"])
+
+        if (
+            wanted in result_title
+            or result_title in wanted
+        ):
+            return result["url"]
+
+    return results[0]["url"]
 
 
-def _absolute(url, base):
-    url = _clean(url)
+def get_episode_url(anime_url, episode_number):
+    status, body = _request(
+        anime_url,
+        headers={
+            "Referer": BASE_URL + "/",
+        },
+    )
 
-    if not url:
-        return ""
+    if status != 200:
+        return None
 
-    return urllib.parse.urljoin(base, url)
+    li_pattern = re.compile(
+        r'<li\b[^>]*class=["\'][^"\']*mark-[^"\']*["\'][^>]*>'
+        r'(.*?)'
+        r'</li>',
+        re.I | re.S,
+    )
+
+    episode_patterns = [
+        re.compile(
+            r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>.*?'
+            r'<div\b[^>]*class=["\'][^"\']*episodiotitle[^"\']*["\'][^>]*>'
+            r'\s*(?:الحلقة|episode|ep\.?)\s*'
+            + re.escape(str(episode_number))
+            + r'\s*'
+            r'</div>',
+            re.I | re.S,
+        ),
+
+        re.compile(
+            r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>.*?'
+            r'(?:الحلقة|episode|ep\.?)\s*'
+            + re.escape(str(episode_number))
+            + r'\b.*?</a>',
+            re.I | re.S,
+        ),
+    ]
+
+    for li in li_pattern.finditer(body):
+        block = li.group(1)
+
+        for pattern in episode_patterns:
+            match = pattern.search(block)
+
+            if match:
+                return urllib.parse.urljoin(
+                    anime_url,
+                    html.unescape(match.group(1)),
+                )
+
+    return None
 
 
 def _get_origin(url):
@@ -125,574 +250,157 @@ def _get_origin(url):
     )
 
 
-def get_anime_name(imdb_id):
-    url = (
-        CINEMETA_URL
-        + "/meta/series/"
-        + urllib.parse.quote(imdb_id, safe="")
-        + ".json"
-    )
-
-    status, body = _request(url)
-
-    if status != 200:
-        print("DEBUG: Cinemeta HTTP status:", status)
-        return None
-
-    try:
-        data = json.loads(body)
-    except Exception as exc:
-        print("DEBUG: Cinemeta JSON error:", exc)
-        return None
-
-    meta = data.get("meta") or {}
-
-    name = (
-        meta.get("name")
-        or meta.get("originalName")
-        or meta.get("original_title")
-    )
-
-    if not name:
-        print("DEBUG: Cinemeta returned no anime name")
-        return None
-
-    return _clean(name)
-
-
-def search_anime(name):
-    query = urllib.parse.urlencode({
-        "s": name
-    })
-
-    search_url = (
-        BASE_URL.rstrip("/")
-        + "/?"
-        + query
-    )
-
-    print("DEBUG: Search URL:", search_url)
-
+def get_m3u8_from_episode(episode_url):
     status, body = _request(
-        search_url,
-        referer=BASE_URL.rstrip("/") + "/",
+        episode_url,
+        headers={
+            "Referer": BASE_URL + "/",
+        },
     )
-
-    print("DEBUG: Search HTTP status:", status)
 
     if status != 200:
-        return None
+        return None, None
 
-    results = []
-
-    pattern = re.compile(
-        r'<a\b'
-        r'[^>]*href=["\']([^"\']*?/anime/[^"\']*)["\']'
-        r'[^>]*>'
-        r'([\s\S]*?)'
-        r'</a>',
-        re.I,
-    )
-
-    for match in pattern.finditer(body):
-        href = _clean(match.group(1))
-        content = match.group(2)
-
-        title_match = re.search(
-            r'<h[1-6]\b[^>]*>([\s\S]*?)</h[1-6]>',
-            content,
-            re.I,
-        )
-
-        if title_match:
-            title = title_match.group(1)
-        else:
-            title = content
-
-        title = re.sub(
-            r"<[^>]+>",
-            " ",
-            title,
-        )
-
-        title = _clean(title)
-
-        if not title:
-            continue
-
-        url = _absolute(
-            href,
-            search_url,
-        )
-
-        if not url:
-            continue
-
-        results.append({
-            "title": title,
-            "url": url,
-        })
-
-    print("DEBUG: Search results:", len(results))
-
-    if not results:
-        return None
-
-    wanted = _normalize(name)
-
-    for result in results:
-        if _normalize(result["title"]) == wanted:
-            return result["url"]
-
-    for result in results:
-        current = _normalize(result["title"])
-
-        if (
-            wanted in current
-            or current in wanted
-        ):
-            return result["url"]
-
-    return results[0]["url"]
-
-
-def get_episode_url(anime_url, episode_number):
-    status, body = _request(
-        anime_url,
-        referer=BASE_URL.rstrip("/") + "/",
-    )
-
-    print("DEBUG: Anime page HTTP status:", status)
-
-    if status != 200:
-        return None
-
-    episode_number = int(episode_number)
-
-    blocks = re.findall(
-        r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>'
-        r'([\s\S]*?)'
-        r'</a>',
+    iframe_match = re.search(
+        r'<iframe\b[^>]*\bsrc=["\']([^"\']+)["\']',
         body,
-        re.I,
+        re.I | re.S,
     )
 
-    candidates = []
+    if not iframe_match:
+        return None, None
 
-    for href, content in blocks:
-
-        if "/episodes/" not in href.lower():
-            continue
-
-        text = re.sub(
-            r"<[^>]+>",
-            " ",
-            content,
-        )
-
-        text = _clean(text)
-
-        number_match = re.search(
-            r"(?:الحلقة|episode|ep\.?)\s*"
-            r"0*([0-9]+)",
-            text,
-            re.I,
-        )
-
-        if not number_match:
-            continue
-
-        found_number = int(
-            number_match.group(1)
-        )
-
-        if found_number != episode_number:
-            continue
-
-        episode_url = _absolute(
-            href,
-            anime_url,
-        )
-
-        if episode_url:
-            candidates.append(
-                episode_url
-            )
-
-    print(
-        "DEBUG: Matching episode links:",
-        len(candidates),
+    iframe_url = html.unescape(
+        iframe_match.group(1)
     )
 
-    if candidates:
-        return candidates[0]
-
-    return None
-
-
-def get_iframe_url(episode_url):
-    status, body = _request(
+    iframe_url = urllib.parse.urljoin(
         episode_url,
-        referer=BASE_URL.rstrip("/") + "/",
+        iframe_url,
     )
 
-    print(
-        "DEBUG: Episode page HTTP status:",
-        status,
+    status, iframe_body = _request(
+        iframe_url,
+        headers={
+            "Referer": episode_url,
+            "Origin": _get_origin(iframe_url),
+        },
     )
 
     if status != 200:
-        return None
+        return None, iframe_url
 
-    iframe_matches = re.findall(
-        r"<iframe\b[^>]*\bsrc\s*=\s*"
-        r"""["']([^"']+)["']""",
-        body,
-        re.I,
+    iframe_body = html.unescape(iframe_body)
+
+    m3u8_match = re.search(
+        r'<source\b[^>]*\bsrc=["\']([^"\']*\.m3u8[^"\']*)["\']',
+        iframe_body,
+        re.I | re.S,
     )
 
-    print(
-        "DEBUG: Iframes found:",
-        len(iframe_matches),
-    )
-
-    if not iframe_matches:
-        return None
-
-    for src in iframe_matches:
-
-        src = _clean(src)
-
-        if not src:
-            continue
-
-        iframe_url = _absolute(
-            src,
-            episode_url,
+    if not m3u8_match:
+        m3u8_match = re.search(
+            r'(["\'])([^"\']+\.m3u8(?:\?[^"\']*)?)\1',
+            iframe_body,
+            re.I | re.S,
         )
 
-        if iframe_url:
-            return iframe_url
+        if not m3u8_match:
+            return None, iframe_url
 
-    return None
+        m3u8_url = m3u8_match.group(2)
 
+    else:
+        m3u8_url = m3u8_match.group(1)
 
-def get_m3u8(iframe_url, episode_url):
-    origin = _get_origin(
-        iframe_url
-    )
-
-    status, body = _request(
+    m3u8_url = urllib.parse.urljoin(
         iframe_url,
-        referer=episode_url,
-        origin=origin,
-    )
-
-    print(
-        "DEBUG: Iframe HTTP status:",
-        status,
-    )
-
-    if status != 200:
-        return None
-
-    body = _clean(body)
-
-    patterns = [
-
-        # <source src="...m3u8">
-        r'<source\b[^>]*\bsrc\s*=\s*'
-        r"""["']([^"']*\.m3u8(?:\?[^"']*)?)["']""",
-
-        # src="...m3u8"
-        r'\bsrc\s*=\s*'
-        r"""["']([^"']*\.m3u8(?:\?[^"']*)?)["']""",
-
-        # "https://...m3u8"
-        r"""["'](https?://[^"']*\.m3u8(?:\?[^"']*)?)["']""",
-
-        # Bare URL
-        r"""(https?://[^\s"'<>\\]+\.m3u8(?:\?[^\s"'<>\\]*)?)""",
-    ]
-
-    for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            body,
-            re.I,
-        )
-
-        if not match:
-            continue
-
-        url = _clean(
-            match.group(1)
-        )
-
-        if ".m3u8" not in url.lower():
-            continue
-
-        return _absolute(
-            url,
-            iframe_url,
-        )
-
-    print(
-        "DEBUG: No m3u8 found in iframe HTML"
-    )
-
-    return None
-
-
-def series(imdb_id, season, episode):
-
-    print("=== DEBUG START ===")
-
-    print(
-        "DEBUG: IMDb ID:",
-        imdb_id,
-    )
-
-    print(
-        "DEBUG: Season:",
-        season,
-    )
-
-    print(
-        "DEBUG: Episode:",
-        episode,
-    )
-
-    # 1. Get anime name
-    anime_name = get_anime_name(
-        imdb_id
-    )
-
-    print(
-        "DEBUG: Anime name:",
-        anime_name,
-    )
-
-    if not anime_name:
-        print(
-            "DEBUG FAIL: get_anime_name()"
-        )
-        return {}
-
-    # 2. Search anime
-    anime_url = search_anime(
-        anime_name
-    )
-
-    print(
-        "DEBUG: Anime URL:",
-        anime_url,
-    )
-
-    if not anime_url:
-        print(
-            "DEBUG FAIL: search_anime()"
-        )
-        return {}
-
-    # 3. Find episode
-    episode_url = get_episode_url(
-        anime_url,
-        episode,
-    )
-
-    print(
-        "DEBUG: Episode URL:",
-        episode_url,
-    )
-
-    if not episode_url:
-        print(
-            "DEBUG FAIL: get_episode_url()"
-        )
-        return {}
-
-    # 4. Find iframe
-    iframe_url = get_iframe_url(
-        episode_url
-    )
-
-    print(
-        "DEBUG: Iframe URL:",
-        iframe_url,
-    )
-
-    if not iframe_url:
-        print(
-            "DEBUG FAIL: get_iframe_url()"
-        )
-        return {}
-
-    # 5. Find m3u8
-    m3u8_url = get_m3u8(
-        iframe_url,
-        episode_url,
-    )
-
-    print(
-        "DEBUG: M3U8 URL:",
         m3u8_url,
     )
 
-    if not m3u8_url:
-        print(
-            "DEBUG FAIL: get_m3u8()"
-        )
+    return m3u8_url, iframe_url
+
+
+def series(imdb_id, season, episode):
+    anime_name = get_anime_name(imdb_id)
+
+    if not anime_name:
         return {}
 
-    print(
-        "=== DEBUG SUCCESS ==="
+    anime_url = search_anime(anime_name)
+
+    if not anime_url:
+        return {}
+
+    episode_url = get_episode_url(
+        anime_url,
+        int(episode),
     )
+
+    if not episode_url:
+        return {}
+
+    m3u8_url, iframe_url = get_m3u8_from_episode(
+        episode_url,
+    )
+
+    if not m3u8_url:
+        return {}
 
     return {
         "url": m3u8_url,
         "User-Agent": USER_AGENT,
         "Referer": iframe_url,
-        "Origin": _get_origin(
-            iframe_url
-        ),
+        "Origin": _get_origin(iframe_url),
     }
 
 
-def get_streams(
-    media_type,
-    media_id,
-    config=None
-):
+def get_streams(media_type, media_id, config=None):
+    imdb_id = media_id
+    season = None
+    episode = None
 
-    print(
-        "=== get_streams START ==="
-    )
+    if ":" in media_id:
+        parts = media_id.split(":", 2)
 
-    print(
-        "DEBUG media_type:",
-        media_type,
-    )
-
-    print(
-        "DEBUG media_id:",
-        media_id,
-    )
+        imdb_id = parts[0]
+        season = parts[1]
+        episode = parts[2]
 
     if media_type != "series":
-
-        print(
-            "DEBUG FAIL: media_type"
-        )
-
         return []
 
-    parts = media_id.split(
-        ":",
-        2
-    )
-
-    print(
-        "DEBUG parts:",
-        parts,
-    )
-
-    if len(parts) != 3:
-
-        print(
-            "DEBUG FAIL: media_id format"
-        )
-
-        return []
-
-    imdb_id = parts[0]
-    season = parts[1]
-    episode = parts[2]
-
-    if not imdb_id or not episode:
-
-        print(
-            "DEBUG FAIL: missing IMDb or episode"
-        )
-
-        return []
-
-    try:
-        episode_number = int(
-            episode
-        )
-
-    except ValueError:
-
-        print(
-            "DEBUG FAIL: invalid episode"
-        )
-
+    if not episode:
         return []
 
     info = series(
         imdb_id,
         season,
-        episode_number,
+        int(episode),
     )
 
-    if not info:
-
-        print(
-            "DEBUG FAIL: series() returned {}"
-        )
-
+    if not info or not info.get("url"):
         return []
-
-    stream_url = info.get(
-        "url"
-    )
-
-    if not stream_url:
-
-        print(
-            "DEBUG FAIL: no stream URL"
-        )
-
-        return []
-
-    print(
-        "DEBUG STREAM:",
-        stream_url,
-    )
 
     return [
         {
             "name": TITLE,
-
-            "title": (
-                "Episode "
-                + str(episode_number)
-            ),
-
-            "url": stream_url,
-
+            "title": "Episode " + str(episode),
+            "url": info["url"],
             "behaviorHints": {
-
                 "notMyMetadata": True,
-
                 "proxyHeaders": {
-
                     "request": {
-
                         "User-Agent": info.get(
                             "User-Agent",
                             USER_AGENT,
                         ),
-
-                        "Referer": info.get(
-                            "Referer",
-                            "",
-                        ),
-
                         "Origin": info.get(
                             "Origin",
+                            "",
+                        ),
+                        "Referer": info.get(
+                            "Referer",
                             "",
                         ),
                     }
